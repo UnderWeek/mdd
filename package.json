@@ -1,6 +1,6 @@
 {
   "name": "@underweek/mdd",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A direct Windows Minecraft mod manager for the .minecraft/mods folder.",
   "type": "module",
   "keywords": [

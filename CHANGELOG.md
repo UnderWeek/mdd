@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 — 2026-08-10
+
+- Keep an already installed compatible or newer dependency instead of downgrading it to Modrinth's recommended dependency version.
+- Improve locked-file errors during mod replacement.
+
 ## 0.1.1 — 2026-08-10
 
 - Support `mdd install project@version` for exact version requests.

@@ -3,10 +3,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
+import semver from 'semver';
 import { loadConfig, saveConfig, minecraftDir, modsDir, configFile } from './config.js';
 import {
   searchProjects,
   getVersion,
+  getProject,
   resolveProject,
   resolveProjectVersion,
   splitProjectQuery,
@@ -263,6 +265,36 @@ function sameVersionNumber(actual, expected) {
   return String(actual || '').trim().toLowerCase() === String(expected || '').trim().toLowerCase();
 }
 
+function normalizedModVersion(value) {
+  return semver.valid(value) || semver.valid(semver.coerce(String(value || '')));
+}
+
+function installedVersionSatisfies(installed, requested) {
+  const installedVersion = normalizedModVersion(installed);
+  const requestedVersion = normalizedModVersion(requested);
+  if (installedVersion && requestedVersion) return semver.gte(installedVersion, requestedVersion);
+  return sameVersionNumber(installed, requested);
+}
+
+async function dependencyAlreadySatisfied(dependencyVersion, modsPath, projectSlugs) {
+  const projectId = dependencyVersion.project_id;
+  if (!projectId) return false;
+  if (!projectSlugs.has(projectId)) {
+    const project = await getProject(projectId);
+    projectSlugs.set(projectId, project.slug || '');
+  }
+  const slug = projectSlugs.get(projectId);
+  if (!slug) return false;
+
+  const installed = await listJarMetadata(modsPath);
+  const slugPrefix = `${slug.toLowerCase()}-`;
+  return installed.some((jar) => {
+    const fileName = jar.fileName.toLowerCase();
+    const sameProject = jar.id?.toLowerCase() === slug.toLowerCase() || fileName.startsWith(slugPrefix);
+    return sameProject && installedVersionSatisfies(jar.version, dependencyVersion.version_number);
+  });
+}
+
 async function isAlreadyInstalled(destination, file, version) {
   let existing;
   try {
@@ -303,7 +335,7 @@ async function replaceExistingModJars(modId, destination, modsPath) {
   }
 }
 
-async function installVersion(version, { modsPath, config, installDependencies, seen }) {
+async function installVersion(version, { modsPath, config, installDependencies, seen, projectSlugs }) {
   if (seen.has(version.id)) return;
   seen.add(version.id);
 
@@ -314,7 +346,11 @@ async function installVersion(version, { modsPath, config, installDependencies, 
       if (dependency.version_id) dependencyVersion = await getVersion(dependency.version_id);
       else if (dependency.project_id) dependencyVersion = await resolveProjectVersion(dependency.project_id, config);
       if (!dependencyVersion) continue;
-      await installVersion(dependencyVersion, { modsPath, config, installDependencies, seen });
+      if (await dependencyAlreadySatisfied(dependencyVersion, modsPath, projectSlugs)) {
+        console.log(`  dependency already satisfied: ${dependencyVersion.version_number}`);
+        continue;
+      }
+      await installVersion(dependencyVersion, { modsPath, config, installDependencies, seen, projectSlugs });
     }
   }
 
@@ -361,7 +397,13 @@ async function commandInstall(query, options, config, seen = new Set(), progress
   if (progress) console.log(`\n[${progress.index}/${progress.total}] ${project.title}`);
   console.log(`Project: ${project.title} (${project.slug})`);
   console.log(`Version: ${version.version_number} | Minecraft ${config.minecraftVersion} | ${config.loader}`);
-  await installVersion(version, { modsPath: targetMods, config, installDependencies: options.dependencies, seen });
+  await installVersion(version, {
+    modsPath: targetMods,
+    config,
+    installDependencies: options.dependencies,
+    seen,
+    projectSlugs: new Map()
+  });
   if (!options.dependencies) console.log('Warning: dependencies disabled by --no-dependencies.');
 }
 
