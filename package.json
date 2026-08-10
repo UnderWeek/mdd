@@ -1,0 +1,38 @@
+{
+  "name": "@underweek/mdd",
+  "version": "0.1.0",
+  "description": "A direct Windows Minecraft mod manager for the .minecraft/mods folder.",
+  "type": "module",
+  "keywords": [
+    "minecraft",
+    "mods",
+    "fabric",
+    "modrinth",
+    "cli"
+  ],
+  "bin": {
+    "mdd": "src/cli.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "check": "node --check src/cli.js && node --check src/modrinth.js && node --check src/check.js && node --check src/jars.js && node --check src/config.js",
+    "test": "node --test",
+    "prepack": "npm run check && npm test"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "semver": "^7.7.2"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
