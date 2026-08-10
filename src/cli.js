@@ -256,7 +256,35 @@ async function cleanupStaleDownloads(modsPath) {
 }
 
 function fileBusyError(filePath) {
-  return new Error(`File is in use by another program: ${filePath}. Close Minecraft and run the command again.`);
+  return new Error(`Cannot replace locked file: ${filePath}. Close the program using this file and run the command again.`);
+}
+
+function sameVersionNumber(actual, expected) {
+  return String(actual || '').trim().toLowerCase() === String(expected || '').trim().toLowerCase();
+}
+
+async function isAlreadyInstalled(destination, file, version) {
+  let existing;
+  try {
+    existing = await fs.readFile(destination);
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    if (error.code === 'EBUSY' || error.code === 'EPERM') throw fileBusyError(destination);
+    throw error;
+  }
+
+  if (file.hashes?.sha1) {
+    const existingHash = crypto.createHash('sha1').update(existing).digest('hex');
+    if (existingHash === file.hashes.sha1.toLowerCase()) return true;
+  }
+
+  // Modrinth filenames are versioned, but the hash can differ when a user
+  // got the same release from another mirror or an older mdd download.
+  // Read the local metadata before deciding that a same-named file is the
+  // requested release; this avoids unlinking a valid, locked installation.
+  if (path.basename(destination) !== file.filename) return false;
+  const metadata = await readJarMetadata(destination);
+  return metadata.type !== 'invalid' && sameVersionNumber(metadata.version, version.version_number);
 }
 
 async function replaceExistingModJars(modId, destination, modsPath) {
@@ -295,26 +323,20 @@ async function installVersion(version, { modsPath, config, installDependencies, 
   const bytes = await downloadFile(file);
   if (file.hashes?.sha1) {
     const actual = crypto.createHash('sha1').update(bytes).digest('hex');
-    if (actual !== file.hashes.sha1) throw new Error(`SHA-1 verification failed for ${file.filename}.`);
+    if (actual !== file.hashes.sha1.toLowerCase()) throw new Error(`SHA-1 verification failed for ${file.filename}.`);
   }
   const destination = path.join(modsPath, file.filename);
-  if (file.hashes?.sha1) {
-    try {
-      const existing = await fs.readFile(destination);
-      const existingHash = crypto.createHash('sha1').update(existing).digest('hex');
-      if (existingHash === file.hashes.sha1) {
-        console.log(`  already installed: ${file.filename}`);
-        return;
-      }
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
+  if (await isAlreadyInstalled(destination, file, version)) {
+    console.log(`  already installed: ${file.filename}`);
+    return;
   }
-  const backup = await backupIfPresent(destination, modsPath);
+
   const temporary = `${destination}.mdd-download-${process.pid}.tmp`;
   await fs.writeFile(temporary, bytes);
+  let backup = null;
   try {
     const downloadedMetadata = await readJarMetadata(temporary);
+    backup = await backupIfPresent(destination, modsPath);
     await replaceExistingModJars(downloadedMetadata.id, destination, modsPath);
     if (backup) await fs.unlink(destination);
     await fs.rename(temporary, destination);
