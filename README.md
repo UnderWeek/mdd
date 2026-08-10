@@ -36,6 +36,7 @@ mdd loader fabric
 mdd search "Mouse Tweaks"
 mdd search "Mouse Tweaks" --plain
 mdd install "Mouse Tweaks"
+mdd install sodium@0.8.12
 mdd install mousetweaks appleskin betterf3
 mdd install "Mouse Tweaks" --no-dependencies
 mdd list
@@ -47,6 +48,8 @@ mdd check --strict
 Modrinth is used as the initial source because it exposes project/version metadata, loader filters, dependency metadata, hashes, and direct file URLs. The package verifies the SHA-1 reported by Modrinth before placing a file in `mods`.
 
 `mdd install` accepts multiple mod names or slugs in one command. They are installed sequentially; shared dependencies are processed only once, and a failed mod does not stop the remaining requested mods.
+
+Append `@version` to request a specific mod version. Modrinth version suffixes are matched automatically, so `mdd install sodium@0.8.12` selects `0.8.12+mc1.21.11` for the configured Minecraft version.
 
 `mdd search` opens an interactive Windows-terminal selector when attached to a terminal. Use Up/Down and Enter; the selected project's ID, slug, and description are shown below the list. `--plain` keeps a non-interactive aligned output and `--json` remains available for scripts.
 

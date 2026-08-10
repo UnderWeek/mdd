@@ -1,4 +1,5 @@
 const API = process.env.MDD_MODRINTH_API || 'https://api.modrinth.com/v2';
+const USER_AGENT = 'mdd/@underweek/mdd 0.1.1';
 
 function facet(value) {
   return JSON.stringify([value]);
@@ -6,7 +7,7 @@ function facet(value) {
 
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
-    headers: { 'User-Agent': 'mdd/@underweek/mdd 0.1.0', Accept: 'application/json' },
+    headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
     ...options
   });
   if (!response.ok) {
@@ -47,6 +48,22 @@ export function selectProject(results, query) {
   return results.find((item) => item.title?.toLowerCase() === needle || item.slug?.toLowerCase() === needle) || results[0];
 }
 
+export function splitProjectQuery(query) {
+  const value = query.trim();
+  const match = value.match(/^(.+?)@([0-9][0-9A-Za-z.+-]*)$/);
+  if (!match) return { projectQuery: value, requestedVersion: null };
+  return { projectQuery: match[1].trim(), requestedVersion: match[2] };
+}
+
+export function versionMatches(versionNumber, requestedVersion) {
+  const actual = String(versionNumber || '').toLowerCase();
+  const requested = String(requestedVersion || '').trim().toLowerCase();
+  if (!actual || !requested) return false;
+  if (actual === requested) return true;
+  const escaped = requested.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[-+])${escaped}(?:$|[-+])`, 'i').test(actual);
+}
+
 function slugify(value) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
@@ -77,20 +94,26 @@ export function selectRelease(versions) {
   return versions.find((version) => version.version_type === 'release') || versions[0];
 }
 
-export async function resolveProjectVersion(projectId, config) {
+export async function resolveProjectVersion(projectId, config, requestedVersion = null) {
   const versions = await getProjectVersions(projectId, {
     version: config.minecraftVersion ?? config.version,
     loader: config.loader
   });
-  const selected = selectRelease(versions);
+  const compatibleVersions = requestedVersion
+    ? versions.filter((version) => versionMatches(version.version_number, requestedVersion))
+    : versions;
+  const selected = selectRelease(compatibleVersions);
   if (!selected) {
+    if (requestedVersion) {
+      throw new Error(`No version ${requestedVersion} of project ${projectId} was found for Minecraft ${config.minecraftVersion} + ${config.loader}.`);
+    }
     throw new Error(`No version of project ${projectId} was found for Minecraft ${config.minecraftVersion} + ${config.loader}.`);
   }
   return selected;
 }
 
 export async function downloadFile(file) {
-  const response = await fetch(file.url, { headers: { 'User-Agent': 'mdd/@underweek/mdd 0.1.0' } });
+  const response = await fetch(file.url, { headers: { 'User-Agent': USER_AGENT } });
   if (!response.ok) throw new Error(`Could not download ${file.filename}: HTTP ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
   return bytes;

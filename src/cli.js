@@ -9,6 +9,7 @@ import {
   getVersion,
   resolveProject,
   resolveProjectVersion,
+  splitProjectQuery,
   downloadFile
 } from './modrinth.js';
 import { listJarMetadata, readJarMetadata } from './jars.js';
@@ -233,6 +234,27 @@ async function backupIfPresent(destination, modsPath) {
   return backup;
 }
 
+async function cleanupStaleDownloads(modsPath) {
+  let entries;
+  try {
+    entries = await fs.readdir(modsPath, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
+  const cutoff = Date.now() - 15 * 60 * 1000;
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^.+\.mdd-download-\d+\.tmp$/i.test(entry.name)) continue;
+    const filePath = path.join(modsPath, entry.name);
+    try {
+      const stats = await fs.stat(filePath);
+      if (stats.mtimeMs < cutoff) await fs.unlink(filePath);
+    } catch (error) {
+      if (error.code !== 'ENOENT' && error.code !== 'EBUSY' && error.code !== 'EPERM') throw error;
+    }
+  }
+}
+
 function fileBusyError(filePath) {
   return new Error(`File is in use by another program: ${filePath}. Close Minecraft and run the command again.`);
 }
@@ -297,20 +319,23 @@ async function installVersion(version, { modsPath, config, installDependencies, 
     if (backup) await fs.unlink(destination);
     await fs.rename(temporary, destination);
   } catch (error) {
-    await fs.unlink(temporary).catch(() => {});
     if (error.code === 'EBUSY' || error.code === 'EPERM') throw fileBusyError(destination);
     throw error;
+  } finally {
+    await fs.unlink(temporary).catch(() => {});
   }
   console.log(`  installed: ${file.filename}${backup ? ' (old version in .mdd-backup)' : ''}`);
 }
 
 async function commandInstall(query, options, config, seen = new Set(), progress = null) {
   if (!config.minecraftVersion || !config.loader) throw new Error('Set `mdd version ...` and `mdd loader ...` first.');
-  const project = await resolveProject(query, { version: config.minecraftVersion, loader: config.loader });
+  const { projectQuery, requestedVersion } = splitProjectQuery(query);
+  const project = await resolveProject(projectQuery, { version: config.minecraftVersion, loader: config.loader });
   const projectId = project.id || project.project_id;
-  const version = await resolveProjectVersion(projectId, config);
+  const version = await resolveProjectVersion(projectId, config, requestedVersion);
   const targetMods = modsDir(options['minecraft-dir']);
   await fs.mkdir(targetMods, { recursive: true });
+  await cleanupStaleDownloads(targetMods);
   if (progress) console.log(`\n[${progress.index}/${progress.total}] ${project.title}`);
   console.log(`Project: ${project.title} (${project.slug})`);
   console.log(`Version: ${version.version_number} | Minecraft ${config.minecraftVersion} | ${config.loader}`);
