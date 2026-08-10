@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4 — 2026-08-10
+
+- Show dependency names, versions, and filenames in install output.
+- Allow `mdd remove` to resolve a Modrinth project slug to its installed JAR filename.
+
 ## 0.1.3 — 2026-08-10
 
 - Keep an already installed compatible or newer dependency instead of downgrading it to Modrinth's recommended dependency version.

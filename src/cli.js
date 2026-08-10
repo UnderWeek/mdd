@@ -9,6 +9,7 @@ import {
   searchProjects,
   getVersion,
   getProject,
+  getProjectVersions,
   resolveProject,
   resolveProjectVersion,
   splitProjectQuery,
@@ -276,23 +277,27 @@ function installedVersionSatisfies(installed, requested) {
   return sameVersionNumber(installed, requested);
 }
 
-async function dependencyAlreadySatisfied(dependencyVersion, modsPath, projectSlugs) {
+async function dependencyProject(dependencyVersion, projectSlugs) {
   const projectId = dependencyVersion.project_id;
-  if (!projectId) return false;
+  if (!projectId) return null;
   if (!projectSlugs.has(projectId)) {
-    const project = await getProject(projectId);
-    projectSlugs.set(projectId, project.slug || '');
+    projectSlugs.set(projectId, await getProject(projectId));
   }
-  const slug = projectSlugs.get(projectId);
-  if (!slug) return false;
+  return projectSlugs.get(projectId);
+}
+
+async function findSatisfiedDependency(dependencyVersion, modsPath, projectSlugs) {
+  const project = await dependencyProject(dependencyVersion, projectSlugs);
+  const slug = project?.slug;
+  if (!slug) return null;
 
   const installed = await listJarMetadata(modsPath);
   const slugPrefix = `${slug.toLowerCase()}-`;
-  return installed.some((jar) => {
+  return installed.find((jar) => {
     const fileName = jar.fileName.toLowerCase();
     const sameProject = jar.id?.toLowerCase() === slug.toLowerCase() || fileName.startsWith(slugPrefix);
     return sameProject && installedVersionSatisfies(jar.version, dependencyVersion.version_number);
-  });
+  }) || null;
 }
 
 async function isAlreadyInstalled(destination, file, version) {
@@ -346,8 +351,11 @@ async function installVersion(version, { modsPath, config, installDependencies, 
       if (dependency.version_id) dependencyVersion = await getVersion(dependency.version_id);
       else if (dependency.project_id) dependencyVersion = await resolveProjectVersion(dependency.project_id, config);
       if (!dependencyVersion) continue;
-      if (await dependencyAlreadySatisfied(dependencyVersion, modsPath, projectSlugs)) {
-        console.log(`  dependency already satisfied: ${dependencyVersion.version_number}`);
+      const satisfiedDependency = await findSatisfiedDependency(dependencyVersion, modsPath, projectSlugs);
+      if (satisfiedDependency) {
+        const project = await dependencyProject(dependencyVersion, projectSlugs);
+        const label = project?.title || project?.slug || dependencyVersion.project_id || 'unknown dependency';
+        console.log(`  dependency already satisfied: ${label} (${satisfiedDependency.version}) [${satisfiedDependency.fileName}]`);
         continue;
       }
       await installVersion(dependencyVersion, { modsPath, config, installDependencies, seen, projectSlugs });
@@ -511,7 +519,20 @@ async function main() {
     const query = text(positional.join(' ')).toLowerCase();
     if (!query) throw new Error('Enter a mod name, ID, or filename.');
     const jars = await listJarMetadata(targetMods);
-    const matches = jars.filter((jar) => [jar.id, jar.name, jar.fileName].filter(Boolean).some((value) => value.toLowerCase() === query));
+    let matches = jars.filter((jar) => [jar.id, jar.name, jar.fileName].filter(Boolean).some((value) => value.toLowerCase() === query));
+    if (!matches.length) {
+      try {
+        const project = await resolveProject(query, { version: config.minecraftVersion, loader: config.loader });
+        const versions = await getProjectVersions(project.id || project.project_id, {
+          version: config.minecraftVersion,
+          loader: config.loader
+        });
+        const projectFiles = new Set((versions || []).flatMap((version) => (version.files || []).map((file) => file.filename.toLowerCase())));
+        matches = jars.filter((jar) => projectFiles.has(jar.fileName.toLowerCase()));
+      } catch {
+        // Keep the direct-match error below when the query is not a Modrinth project.
+      }
+    }
     if (matches.length !== 1) throw new Error(matches.length ? 'Multiple mods found — specify the exact filename.' : `Mod not found: ${query}`);
     const jar = matches[0];
     try {
